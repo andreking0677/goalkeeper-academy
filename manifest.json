@@ -1,0 +1,12 @@
+{
+  "name": "TC Goalkeeper Academy",
+  "short_name": "TC Academy",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#0B1526",
+  "theme_color": "#0B1526",
+  "orientation": "portrait",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

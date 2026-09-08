@@ -1,0 +1,1437 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>TC Goalkeeper Academy</title>
+<link rel="manifest" href="manifest.json" />
+<meta name="theme-color" content="#0B1526" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="TC Academy" />
+<link rel="apple-touch-icon" href="icon.svg" />
+<link rel="icon" href="icon.svg" type="image/svg+xml" />
+<style>
+  html, body { margin: 0; padding: 0; background: #0B1526; height: 100%; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  #root { min-height: 100vh; }
+  button { font-family: inherit; cursor: pointer; border: none; }
+  input, textarea { font-family: inherit; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js" crossorigin></script>
+
+<script type="text/babel" data-presets="react" data-type="module">
+const { useState, useEffect } = React;
+
+// --- Guardado local en el propio celular (sin internet, sin nube de Claude) ---
+window.storage = {
+  get: async (key) => {
+    const v = localStorage.getItem(key);
+    return v !== null ? { key, value: v } : null;
+  },
+  set: async (key, value) => {
+    localStorage.setItem(key, value);
+    return { key, value };
+  },
+};
+
+// --- Iconos simples (emoji) para no depender de librerías externas ---
+function mkIcon(emoji) {
+  return function Icon({ size = 16, color, style = {} }) {
+    return React.createElement(
+      "span",
+      { style: { fontSize: size, lineHeight: 1, display: "inline-block", color, ...style } },
+      emoji
+    );
+  };
+}
+const UserPlus = mkIcon("➕");
+const Users = mkIcon("👥");
+const TrendingUp = mkIcon("📈");
+const CalendarIcon = mkIcon("📅");
+const Trash2 = mkIcon("🗑️");
+const X = mkIcon("✕");
+const Check = mkIcon("✓");
+const ShieldCheck = mkIcon("🛡️");
+const Pencil = mkIcon("✏️");
+const RotateCcw = mkIcon("↺");
+const ChevronLeft = mkIcon("‹");
+const ChevronRight = mkIcon("›");
+const ArrowRight = mkIcon("→");
+const Ban = mkIcon("🚫");
+const Wallet = mkIcon("💰");
+const PlusCircle = mkIcon("➕");
+
+const NAVY_DARK = "#0B1526";
+const NAVY = "#122242";
+const NAVY_LIGHT = "#1A3160";
+const GOLD = "#C9A227";
+const GOLD_LIGHT = "#E4C567";
+const TEXT = "#F3F1E8";
+const MUTED = "#8EA0C7";
+const AMBER = "#E0B04B";
+const GREEN = "#8FD19E";
+const RED = "#E07A7A";
+
+const PRECIO_MATRICULA = 90;
+const PRECIO_DIARIO = 10;
+const DIAS_ACADEMIA = [2, 4, 6]; // martes, jueves, sábado (0=domingo)
+const NOMBRES_MES = [
+  "enero", "febrero", "marzo", "abril", "mayo", "junio",
+  "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre",
+];
+const NOMBRES_DIA = ["L", "M", "M", "J", "V", "S", "D"];
+
+const pad2 = (n) => String(n).padStart(2, "0");
+const toISO = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+const todayISO = () => toISO(new Date());
+const addMonth = (isoDate) => {
+  const d = new Date(isoDate + "T00:00:00");
+  d.setMonth(d.getMonth() + 1);
+  return toISO(d);
+};
+const fmtDate = (iso) =>
+  new Date(iso + "T00:00:00").toLocaleDateString("es-PE", { day: "2-digit", month: "short", year: "numeric" });
+const diasHastaVencer = (iso) => {
+  const hoy = new Date(todayISO() + "T00:00:00");
+  const venc = new Date(iso + "T00:00:00");
+  return Math.round((venc - hoy) / 86400000);
+};
+
+function App() {
+  const [entered, setEntered] = useState(false);
+  const [students, setStudents] = useState([]);
+  const [transactions, setTransactions] = useState([]);
+  const [loaded, setLoaded] = useState(false);
+  const [tab, setTab] = useState("alumnos");
+  const [vistaAlumnos, setVistaAlumnos] = useState("lista"); // 'lista' | 'tarjetas'
+  const [showAdd, setShowAdd] = useState(false);
+  const [detailStudent, setDetailStudent] = useState(null);
+  const [payModal, setPayModal] = useState(null);
+  const [registroDia, setRegistroDia] = useState(null); // fecha seleccionada para editar registros pasados
+  const [gastoModal, setGastoModal] = useState(null); // { fecha }
+  const [editTx, setEditTx] = useState(null);
+  const [error, setError] = useState("");
+  const [confirmReset, setConfirmReset] = useState(false);
+  const [viewMonth, setViewMonth] = useState(() => {
+    const d = new Date();
+    return { year: d.getFullYear(), month: d.getMonth() };
+  });
+  const [selectedDay, setSelectedDay] = useState(todayISO());
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await window.storage.get("academia-data", false);
+        if (res && res.value) {
+          const data = JSON.parse(res.value);
+          setStudents(data.students || []);
+          setTransactions(data.transactions || []);
+        }
+      } catch (e) {
+        // no data yet
+      } finally {
+        setLoaded(true);
+      }
+    })();
+  }, []);
+
+  const persist = async (nextStudents, nextTransactions) => {
+    try {
+      const result = await window.storage.set(
+        "academia-data",
+        JSON.stringify({ students: nextStudents, transactions: nextTransactions }),
+        false
+      );
+      if (!result) setError("No se pudo guardar. Intenta de nuevo.");
+      else setError("");
+    } catch (e) {
+      setError("No se pudo guardar. Intenta de nuevo.");
+    }
+  };
+
+  const addStudent = (nombre, apellido, tipo, pagoInicial) => {
+    const hoy = todayISO();
+    const nuevo = {
+      id: crypto.randomUUID(),
+      nombre,
+      apellido,
+      tipo,
+      fechaInscripcion: hoy,
+      fechaVenc: tipo === "matriculado" ? addMonth(hoy) : null,
+      periodoInicio: tipo === "matriculado" ? hoy : null,
+      notas: "",
+    };
+    let nextTx = transactions;
+    if (pagoInicial && Number(pagoInicial.monto) > 0) {
+      nextTx = [
+        ...transactions,
+        {
+          id: crypto.randomUUID(),
+          studentId: nuevo.id,
+          fecha: hoy,
+          tipo: tipo === "matriculado" ? "matricula" : "diario",
+          monto: Number(pagoInicial.monto),
+          metodo: pagoInicial.metodo,
+        },
+      ];
+    }
+    const next = [...students, nuevo];
+    setStudents(next);
+    setTransactions(nextTx);
+    persist(next, nextTx);
+    setShowAdd(false);
+  };
+
+  const removeStudent = (id) => {
+    const next = students.filter((s) => s.id !== id);
+    setStudents(next);
+    persist(next, transactions);
+  };
+
+  const updateNotas = (id, notas) => {
+    const next = students.map((s) => (s.id === id ? { ...s, notas } : s));
+    setStudents(next);
+    persist(next, transactions);
+  };
+
+  const pagadoPeriodo = (student) =>
+    transactions
+      .filter((t) => t.studentId === student.id && t.tipo === "matricula" && t.fecha >= student.periodoInicio)
+      .reduce((sum, t) => sum + t.monto, 0);
+  const saldoMatricula = (student) => PRECIO_MATRICULA - pagadoPeriodo(student);
+
+  const ultimaActividad = (studentId) => {
+    const fechas = transactions.filter((t) => t.studentId === studentId && (t.tipo === "asistencia" || t.tipo === "diario" || t.tipo === "matricula")).map((t) => t.fecha);
+    return fechas.length ? fechas.sort().reverse()[0] : null;
+  };
+  const diasSinActividad = (studentId) => {
+    const ultima = ultimaActividad(studentId);
+    const base = ultima || null;
+    if (!base) return null;
+    return Math.round((new Date(todayISO() + "T00:00:00") - new Date(base + "T00:00:00")) / 86400000);
+  };
+  const esInactivoDiario = (student) => {
+    const dias = diasSinActividad(student.id);
+    if (dias === null) {
+      // nunca vino: inactivo si se inscribió hace más de 14 días
+      return diasHastaVencer(student.fechaInscripcion) * -1 > 14;
+    }
+    return dias > 14;
+  };
+  const esInactivoMatriculado = (student) => student.fechaVenc && diasHastaVencer(student.fechaVenc) < -14;
+
+  const pagadoDiarioEnFecha = (student, fecha) =>
+    transactions
+      .filter((t) => t.studentId === student.id && t.tipo === "diario" && t.fecha === fecha)
+      .reduce((sum, t) => sum + t.monto, 0);
+  const saldoDiarioEnFecha = (student, fecha) => PRECIO_DIARIO - pagadoDiarioEnFecha(student, fecha);
+
+  const pagadoHoyDiario = (student) => pagadoDiarioEnFecha(student, todayISO());
+  const saldoDiarioHoy = (student) => saldoDiarioEnFecha(student, todayISO());
+
+  const registrarPago = (student, kind, monto, metodo, fecha = todayISO()) => {
+    let nextStudents = students;
+    if (kind === "matricula" && saldoMatricula(student) <= 0) {
+      nextStudents = students.map((s) =>
+        s.id === student.id ? { ...s, periodoInicio: fecha, fechaVenc: addMonth(fecha) } : s
+      );
+      setStudents(nextStudents);
+    }
+    const tx = { id: crypto.randomUUID(), studentId: student.id, fecha, tipo: kind, monto: Number(monto), metodo };
+    const nextTx = [...transactions, tx];
+    setTransactions(nextTx);
+    persist(nextStudents, nextTx);
+    setPayModal(null);
+  };
+
+  const registrarGasto = (fecha, monto, metodo) => {
+    const tx = { id: crypto.randomUUID(), studentId: null, fecha, tipo: "gasto", monto: Number(monto), metodo };
+    const nextTx = [...transactions, tx];
+    setTransactions(nextTx);
+    persist(students, nextTx);
+    setGastoModal(null);
+  };
+
+  const marcarCancelada = (fecha) => {
+    const tx = { id: crypto.randomUUID(), studentId: null, fecha, tipo: "cancelada", monto: 0, metodo: null };
+    const nextTx = [...transactions, tx];
+    setTransactions(nextTx);
+    persist(students, nextTx);
+  };
+
+  const updateTransaction = (id, monto, metodo) => {
+    const nextTx = transactions.map((t) => (t.id === id ? { ...t, monto: Number(monto), metodo } : t));
+    setTransactions(nextTx);
+    persist(students, nextTx);
+    setEditTx(null);
+  };
+
+  const deleteTransaction = (id) => {
+    const nextTx = transactions.filter((t) => t.id !== id);
+    setTransactions(nextTx);
+    persist(students, nextTx);
+    setEditTx(null);
+  };
+
+  const resetCaja = () => {
+    setTransactions([]);
+    persist(students, []);
+    setConfirmReset(false);
+  };
+
+  const marcarAsistencia = (student, fecha = todayISO()) => {
+    const tx = { id: crypto.randomUUID(), studentId: student.id, fecha, tipo: "asistencia", monto: 0, metodo: null };
+    const nextTx = [...transactions, tx];
+    setTransactions(nextTx);
+    persist(students, nextTx);
+  };
+  const marcarAsistenciaSinPago = marcarAsistencia;
+
+  const asistioEnFecha = (studentId, fecha) =>
+    transactions.some((t) => t.studentId === studentId && t.fecha === fecha && (t.tipo === "asistencia" || t.tipo === "diario"));
+  const asistioHoy = (studentId) => asistioEnFecha(studentId, todayISO());
+
+  const ingresosEfectivo = transactions.filter((t) => t.metodo === "efectivo" && (t.tipo === "matricula" || t.tipo === "diario")).reduce((s, t) => s + t.monto, 0);
+  const ingresosYape = transactions.filter((t) => t.metodo === "yape" && (t.tipo === "matricula" || t.tipo === "diario")).reduce((s, t) => s + t.monto, 0);
+  const gastosEfectivo = transactions.filter((t) => t.metodo === "efectivo" && t.tipo === "gasto").reduce((s, t) => s + t.monto, 0);
+  const gastosYape = transactions.filter((t) => t.metodo === "yape" && t.tipo === "gasto").reduce((s, t) => s + t.monto, 0);
+  const totalIngresos = ingresosEfectivo + ingresosYape;
+  const totalGastos = gastosEfectivo + gastosYape;
+  const utilidadNeta = totalIngresos - totalGastos;
+
+  const matriculados = students.filter((s) => s.tipo === "matriculado");
+  const diarios = students.filter((s) => s.tipo === "diario");
+
+  if (!entered) {
+    return <Landing onEnter={() => setEntered(true)} />;
+  }
+
+  if (!loaded) {
+    return (
+      <div className="flex items-center justify-center h-full min-h-screen" style={{ background: NAVY_DARK, color: TEXT }}>
+        <p className="text-sm" style={{ color: MUTED }}>Cargando datos de la academia…</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen w-full" style={{ background: NAVY_DARK, color: TEXT }}>
+      <div className="flex items-center gap-3 px-5 py-4 border-b" style={{ borderColor: NAVY_LIGHT, background: NAVY }}>
+        <div className="flex items-center justify-center rounded-full w-10 h-10 flex-shrink-0" style={{ background: GOLD, color: NAVY_DARK }}>
+          <ShieldCheck size={22} strokeWidth={2.4} />
+        </div>
+        <div>
+          <p className="text-lg font-semibold leading-tight">TC Goalkeeper Academy</p>
+          <p className="text-xs" style={{ color: MUTED }}>
+            {new Date().toLocaleDateString("es-PE", { weekday: "long", day: "2-digit", month: "long" })}
+          </p>
+        </div>
+      </div>
+
+      {error && (
+        <div className="mx-5 mt-3 text-sm rounded-lg px-3 py-2" style={{ background: "#4A1E1E", color: "#F3C9C9" }}>{error}</div>
+      )}
+
+      <div className="flex px-3 pt-3 gap-1 flex-wrap">
+        {[
+          { id: "alumnos", label: "Alumnos", icon: Users },
+          { id: "registro", label: "Registrar pago", icon: PlusCircle },
+          { id: "calendario", label: "Calendario", icon: CalendarIcon },
+          { id: "finanzas", label: "Finanzas", icon: TrendingUp },
+        ].map(({ id, label, icon: Icon }) => (
+          <button
+            key={id}
+            onClick={() => setTab(id)}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors"
+            style={{ background: tab === id ? GOLD : "transparent", color: tab === id ? NAVY_DARK : MUTED }}
+          >
+            <Icon size={16} />
+            {label}
+          </button>
+        ))}
+      </div>
+
+      <div className="p-5">
+        {tab === "alumnos" && (
+          <div>
+            <div className="flex items-center justify-between mb-4 gap-2">
+              <p className="text-sm" style={{ color: MUTED }}>
+                {students.length} alumno{students.length !== 1 ? "s" : ""} registrado{students.length !== 1 ? "s" : ""}
+              </p>
+              <div className="flex items-center gap-2">
+                <div className="flex rounded-lg overflow-hidden" style={{ background: NAVY }}>
+                  <button onClick={() => setVistaAlumnos("lista")} className="px-2.5 py-1.5 text-xs font-medium" style={{ background: vistaAlumnos === "lista" ? GOLD : "transparent", color: vistaAlumnos === "lista" ? NAVY_DARK : MUTED }}>Lista</button>
+                  <button onClick={() => setVistaAlumnos("tarjetas")} className="px-2.5 py-1.5 text-xs font-medium" style={{ background: vistaAlumnos === "tarjetas" ? GOLD : "transparent", color: vistaAlumnos === "tarjetas" ? NAVY_DARK : MUTED }}>Tarjetas</button>
+                </div>
+                <button onClick={() => setShowAdd(true)} className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-semibold" style={{ background: GOLD, color: NAVY_DARK }}>
+                  <UserPlus size={16} />
+                </button>
+              </div>
+            </div>
+
+            <AlertaVencimientos students={matriculados} diasHastaVencer={diasHastaVencer} onSelect={setDetailStudent} />
+            <InactivosBanner
+              matriculados={matriculados}
+              diarios={diarios}
+              esInactivoMatriculado={esInactivoMatriculado}
+              esInactivoDiario={esInactivoDiario}
+              diasSinActividad={diasSinActividad}
+              diasHastaVencer={diasHastaVencer}
+              onSelect={setDetailStudent}
+            />
+
+            {vistaAlumnos === "lista" ? (
+              <>
+                <AlumnosSection
+                  title="Matriculados · S/ 90 al mes"
+                  students={matriculados}
+                  asistioHoy={asistioHoy}
+                  saldoMatricula={saldoMatricula}
+                  onPagar={(s) => setPayModal({ student: s, kind: "matricula" })}
+                  onMarcarAsistio={marcarAsistenciaSinPago}
+                  onRemove={removeStudent}
+                  onOpenDetail={setDetailStudent}
+                  esInactivo={esInactivoMatriculado}
+                />
+                <AlumnosSection
+                  title="Diarios · S/ 10 por día"
+                  students={diarios}
+                  className="mt-6"
+                  pagadoHoyDiario={pagadoHoyDiario}
+                  saldoDiarioHoy={saldoDiarioHoy}
+                  onPagar={(s) => setPayModal({ student: s, kind: "diario" })}
+                  onRemove={removeStudent}
+                  onOpenDetail={setDetailStudent}
+                  esInactivo={esInactivoDiario}
+                />
+              </>
+            ) : (
+              <>
+                <p className="text-sm font-medium mb-2" style={{ color: GOLD_LIGHT }}>Matriculados · {matriculados.length}</p>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-6">
+                  {matriculados.map((s) => (
+                    <AlumnoCard key={s.id} student={s} saldo={saldoMatricula(s)} costo={PRECIO_MATRICULA} inactivo={esInactivoMatriculado(s)} onClick={() => setDetailStudent(s)} />
+                  ))}
+                </div>
+                <p className="text-sm font-medium mb-2" style={{ color: GOLD_LIGHT }}>Diarios · {diarios.length}</p>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                  {diarios.map((s) => (
+                    <AlumnoCard key={s.id} student={s} saldo={saldoDiarioHoy(s)} costo={PRECIO_DIARIO} inactivo={esInactivoDiario(s)} onClick={() => setDetailStudent(s)} />
+                  ))}
+                </div>
+              </>
+            )}
+
+            {students.length === 0 && <EmptyState text="Todavía no hay alumnos. Añade el primero para empezar." />}
+          </div>
+        )}
+
+        {tab === "registro" && (
+          <div>
+            <p className="text-sm mb-4" style={{ color: MUTED }}>
+              Solo para registrar pagos de hoy, {fmtDate(todayISO())}. Toca "+" para añadir el fondo — se refleja directo en Finanzas.
+            </p>
+            <RegistroSection
+              title="Matriculados"
+              students={matriculados}
+              tipo="matriculado"
+              asistioHoy={asistioHoy}
+              saldoMatricula={saldoMatricula}
+              onAgregar={(s) => setPayModal({ student: s, kind: "matricula" })}
+            />
+            <RegistroSection
+              title="Diarios"
+              students={diarios}
+              tipo="diario"
+              className="mt-6"
+              pagadoHoyDiario={pagadoHoyDiario}
+              saldoDiarioHoy={saldoDiarioHoy}
+              onAgregar={(s) => setPayModal({ student: s, kind: "diario" })}
+            />
+            {students.length === 0 && <EmptyState text="Añade alumnos primero desde la pestaña Alumnos." />}
+          </div>
+        )}
+
+        {tab === "calendario" && (
+          <CalendarTab
+            viewMonth={viewMonth}
+            setViewMonth={setViewMonth}
+            selectedDay={selectedDay}
+            setSelectedDay={setSelectedDay}
+            students={students}
+            transactions={transactions}
+            onAddGasto={(fecha) => setGastoModal({ fecha })}
+            onMarcarCancelada={marcarCancelada}
+            onEditTx={(tx) => setEditTx(tx)}
+            onAbrirRegistroDia={(fecha) => setRegistroDia(fecha)}
+          />
+        )}
+
+        {tab === "finanzas" && (
+          <div>
+            <div className="grid grid-cols-2 gap-3 mb-4">
+              <div className="rounded-xl p-4" style={{ background: NAVY }}>
+                <p className="text-xs mb-1" style={{ color: MUTED }}>Utilidad bruta</p>
+                <p className="text-xl font-semibold" style={{ color: GOLD_LIGHT }}>S/ {totalIngresos.toFixed(2)}</p>
+              </div>
+              <div className="rounded-xl p-4" style={{ background: NAVY }}>
+                <p className="text-xs mb-1" style={{ color: MUTED }}>Utilidad neta</p>
+                <p className="text-xl font-semibold" style={{ color: utilidadNeta >= 0 ? GREEN : RED }}>S/ {utilidadNeta.toFixed(2)}</p>
+              </div>
+            </div>
+
+            <div className="rounded-xl p-4 mb-4" style={{ background: NAVY }}>
+              <div className="grid grid-cols-3 gap-2 text-xs mb-2" style={{ color: MUTED }}>
+                <span></span><span className="text-right">Ingresos</span><span className="text-right">Gastos</span>
+              </div>
+              <div className="grid grid-cols-3 gap-2 text-sm mb-1.5 items-center">
+                <span className="flex items-center gap-1"><Wallet size={13} style={{ color: MUTED }} /> Efectivo</span>
+                <span className="text-right" style={{ color: GOLD_LIGHT }}>S/ {ingresosEfectivo.toFixed(2)}</span>
+                <span className="text-right" style={{ color: RED }}>S/ {gastosEfectivo.toFixed(2)}</span>
+              </div>
+              <div className="grid grid-cols-3 gap-2 text-sm items-center">
+                <span>Yape</span>
+                <span className="text-right" style={{ color: GOLD_LIGHT }}>S/ {ingresosYape.toFixed(2)}</span>
+                <span className="text-right" style={{ color: RED }}>S/ {gastosYape.toFixed(2)}</span>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-sm font-medium" style={{ color: TEXT }}>Movimientos</p>
+              <button onClick={() => setConfirmReset(true)} className="flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg font-medium" style={{ background: NAVY_LIGHT, color: RED }}>
+                <RotateCcw size={13} /> Reiniciar todo
+              </button>
+            </div>
+
+            {transactions.filter((t) => t.tipo === "matricula" || t.tipo === "diario" || t.tipo === "gasto").length === 0 ? (
+              <EmptyState text="Todavía no hay ingresos ni gastos registrados." />
+            ) : (
+              <div className="space-y-2">
+                {[...transactions]
+                  .filter((t) => t.tipo === "matricula" || t.tipo === "diario" || t.tipo === "gasto")
+                  .reverse()
+                  .map((t) => {
+                    const s = students.find((x) => x.id === t.studentId);
+                    const esGasto = t.tipo === "gasto";
+                    return (
+                      <button
+                        key={t.id}
+                        onClick={() => setEditTx(t)}
+                        className="w-full flex items-center justify-between rounded-lg px-4 py-2.5 text-sm text-left"
+                        style={{ background: NAVY }}
+                      >
+                        <div>
+                          <p>{esGasto ? "Alquiler de cancha" : s ? `${s.nombre} ${s.apellido}` : "Alumno eliminado"}</p>
+                          <p className="text-xs" style={{ color: MUTED }}>
+                            {esGasto ? "Gasto" : t.tipo === "matricula" ? "Matrícula" : "Pago diario"} · {fmtDate(t.fecha)}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <div className="text-right">
+                            <p className="font-medium" style={{ color: esGasto ? RED : GOLD_LIGHT }}>
+                              {esGasto ? "−" : "+"} S/ {t.monto.toFixed(2)}
+                            </p>
+                            <p className="text-xs capitalize" style={{ color: MUTED }}>{t.metodo}</p>
+                          </div>
+                          <Pencil size={14} style={{ color: MUTED }} />
+                        </div>
+                      </button>
+                    );
+                  })}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {showAdd && <AddStudentModal onClose={() => setShowAdd(false)} onAdd={addStudent} />}
+      {detailStudent && (
+        <StudentDetailModal
+          student={students.find((s) => s.id === detailStudent.id) || detailStudent}
+          transactions={transactions.filter((t) => t.studentId === detailStudent.id)}
+          onClose={() => setDetailStudent(null)}
+          onSaveNotas={updateNotas}
+        />
+      )}
+      {payModal && (
+        <PayModal
+          student={payModal.student}
+          kind={payModal.kind}
+          fecha={payModal.fecha || todayISO()}
+          saldo={payModal.kind === "matricula" ? saldoMatricula(payModal.student) : saldoDiarioEnFecha(payModal.student, payModal.fecha || todayISO())}
+          precioFijo={payModal.kind === "matricula" ? PRECIO_MATRICULA : PRECIO_DIARIO}
+          onClose={() => setPayModal(null)}
+          onConfirm={registrarPago}
+        />
+      )}
+      {registroDia && (
+        <RegistroDiaModal
+          fecha={registroDia}
+          students={students}
+          asistioEnFecha={asistioEnFecha}
+          saldoMatricula={saldoMatricula}
+          pagadoDiarioEnFecha={pagadoDiarioEnFecha}
+          saldoDiarioEnFecha={saldoDiarioEnFecha}
+          onClose={() => setRegistroDia(null)}
+          onMarcarAsistio={(s) => marcarAsistencia(s, registroDia)}
+          onAgregarPago={(s, kind) => setPayModal({ student: s, kind, fecha: registroDia })}
+        />
+      )}
+      {gastoModal && (
+        <GastoModal fecha={gastoModal.fecha} onClose={() => setGastoModal(null)} onConfirm={registrarGasto} />
+      )}
+      {editTx && (
+        <EditTxModal
+          tx={editTx}
+          student={students.find((s) => s.id === editTx.studentId)}
+          onClose={() => setEditTx(null)}
+          onSave={updateTransaction}
+          onDelete={deleteTransaction}
+        />
+      )}
+      {confirmReset && (
+        <ConfirmModal
+          title="¿Reiniciar todo?"
+          message="Se borrarán todos los pagos y gastos registrados (efectivo y Yape) para volver a S/ 0. Los alumnos no se eliminan."
+          confirmLabel="Sí, reiniciar"
+          onCancel={() => setConfirmReset(false)}
+          onConfirm={resetCaja}
+        />
+      )}
+    </div>
+  );
+}
+
+function Landing({ onEnter }) {
+  return (
+    <div
+      className="min-h-screen w-full flex flex-col items-center justify-center px-6 relative overflow-hidden"
+      style={{
+        background: `radial-gradient(circle at 50% 20%, ${NAVY_LIGHT} 0%, ${NAVY} 40%, ${NAVY_DARK} 80%)`,
+        color: TEXT,
+      }}
+    >
+      <style>{`
+        @keyframes pulseGlow {
+          0%, 100% { opacity: 0.35; transform: scale(1); }
+          50% { opacity: 0.6; transform: scale(1.08); }
+        }
+        @keyframes fadeUp {
+          from { opacity: 0; transform: translateY(12px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+      `}</style>
+
+      <div
+        className="absolute rounded-full"
+        style={{
+          width: 260,
+          height: 260,
+          background: `radial-gradient(circle, ${GOLD} 0%, transparent 70%)`,
+          animation: "pulseGlow 3.5s ease-in-out infinite",
+        }}
+      />
+
+      <div className="relative flex flex-col items-center" style={{ animation: "fadeUp 0.6s ease-out" }}>
+        <div
+          className="w-24 h-24 rounded-2xl flex items-center justify-center mb-6 border-2"
+          style={{ background: NAVY, borderColor: GOLD, boxShadow: `0 0 30px rgba(201,162,39,0.35)` }}
+        >
+          <ShieldCheck size={48} color={GOLD} strokeWidth={1.8} />
+        </div>
+        <p className="text-2xl font-bold tracking-wide text-center">TC Goalkeeper Academy</p>
+        <p className="text-sm mt-2 mb-1" style={{ color: GOLD_LIGHT }}>Academia de porteros</p>
+        <p className="text-xs mb-10" style={{ color: MUTED }}>Panel de gestión familiar</p>
+
+        <button
+          onClick={onEnter}
+          className="flex items-center gap-2 px-8 py-3 rounded-full font-semibold"
+          style={{ background: GOLD, color: NAVY_DARK }}
+        >
+          Ingresar <ArrowRight size={17} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function CalendarTab({ viewMonth, setViewMonth, selectedDay, setSelectedDay, students, transactions, onAddGasto, onMarcarCancelada, onEditTx, onAbrirRegistroDia }) {
+  const { year, month } = viewMonth;
+  const first = new Date(year, month, 1);
+  const startOffset = (first.getDay() + 6) % 7;
+  const totalDays = new Date(year, month + 1, 0).getDate();
+  const monthPrefix = `${year}-${pad2(month + 1)}`;
+
+  const cells = [];
+  for (let i = 0; i < startOffset; i++) cells.push(null);
+  for (let d = 1; d <= totalDays; d++) cells.push(d);
+
+  const isoOf = (d) => `${year}-${pad2(month + 1)}-${pad2(d)}`;
+  const vencenEn = (iso) => students.filter((s) => s.tipo === "matriculado" && s.fechaVenc === iso);
+
+  const cambiarMes = (delta) => {
+    let m = month + delta, y = year;
+    if (m < 0) { m = 11; y -= 1; }
+    if (m > 11) { m = 0; y += 1; }
+    setViewMonth({ year: y, month: m });
+  };
+
+  // Resumen del mes
+  let diasAcademiaMes = 0, canceladosMes = 0, gastoMesTotal = 0;
+  for (let d = 1; d <= totalDays; d++) {
+    const dow = new Date(year, month, d).getDay();
+    if (!DIAS_ACADEMIA.includes(dow)) continue;
+    diasAcademiaMes++;
+    const iso = isoOf(d);
+    if (transactions.some((t) => t.fecha === iso && t.tipo === "cancelada")) canceladosMes++;
+  }
+  gastoMesTotal = transactions.filter((t) => t.tipo === "gasto" && t.fecha.startsWith(monthPrefix)).reduce((s, t) => s + t.monto, 0);
+
+  const eventosDelDia = transactions.filter((t) => t.fecha === selectedDay && t.tipo !== "gasto" && t.tipo !== "cancelada")
+    .map((t) => ({ ...t, student: students.find((s) => s.id === t.studentId) }));
+  const vencimientosDelDia = vencenEn(selectedDay);
+  const gastoDelDia = transactions.find((t) => t.fecha === selectedDay && t.tipo === "gasto");
+  const canceladaTx = transactions.find((t) => t.fecha === selectedDay && t.tipo === "cancelada");
+  const dowSel = new Date(selectedDay + "T00:00:00").getDay();
+  const esDiaAcademiaSel = DIAS_ACADEMIA.includes(dowSel);
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-3">
+        <button onClick={() => cambiarMes(-1)} className="p-1.5 rounded-lg" style={{ background: NAVY }}><ChevronLeft size={18} color={TEXT} /></button>
+        <p className="font-medium capitalize">{NOMBRES_MES[month]} {year}</p>
+        <button onClick={() => cambiarMes(1)} className="p-1.5 rounded-lg" style={{ background: NAVY }}><ChevronRight size={18} color={TEXT} /></button>
+      </div>
+
+      <div className="rounded-xl px-4 py-2.5 mb-3 flex justify-between text-xs" style={{ background: NAVY }}>
+        <span style={{ color: MUTED }}>Clases: <b style={{ color: TEXT }}>{diasAcademiaMes - canceladosMes}</b> · Canceladas: <b style={{ color: TEXT }}>{canceladosMes}</b></span>
+        <span style={{ color: MUTED }}>Gasto cancha: <b style={{ color: GOLD_LIGHT }}>S/ {gastoMesTotal.toFixed(2)}</b></span>
+      </div>
+
+      <div className="grid grid-cols-7 gap-1 mb-1">
+        {NOMBRES_DIA.map((d, i) => <p key={i} className="text-center text-xs" style={{ color: MUTED }}>{d}</p>)}
+      </div>
+
+      <div className="grid grid-cols-7 gap-1 mb-3">
+        {cells.map((d, i) => {
+          if (d === null) return <div key={i} />;
+          const iso = isoOf(d);
+          const dow = new Date(year, month, d).getDay();
+          const esDiaAcademia = DIAS_ACADEMIA.includes(dow);
+          const esHoy = iso === todayISO();
+          const esSeleccionado = iso === selectedDay;
+          const hayVencimiento = vencenEn(iso).length > 0;
+          const cancelada = transactions.some((t) => t.fecha === iso && t.tipo === "cancelada");
+          const tieneGasto = transactions.some((t) => t.fecha === iso && t.tipo === "gasto");
+          return (
+            <button
+              key={i}
+              onClick={() => setSelectedDay(iso)}
+              className="relative aspect-square rounded-lg flex items-center justify-center text-sm"
+              style={{
+                background: esSeleccionado ? GOLD : esDiaAcademia ? (cancelada ? "#3A2530" : NAVY_LIGHT) : "transparent",
+                color: esSeleccionado ? NAVY_DARK : esDiaAcademia ? TEXT : MUTED,
+                fontWeight: esHoy ? 700 : 400,
+                border: esHoy ? `1.5px solid ${GOLD}` : "1.5px solid transparent",
+                opacity: cancelada && !esSeleccionado ? 0.55 : 1,
+              }}
+            >
+              {d}
+              <span className="absolute bottom-1 flex gap-0.5">
+                {hayVencimiento && <span className="w-1.5 h-1.5 rounded-full" style={{ background: esSeleccionado ? NAVY_DARK : RED }} />}
+                {tieneGasto && <span className="w-1.5 h-1.5 rounded-full" style={{ background: esSeleccionado ? NAVY_DARK : GOLD_LIGHT }} />}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="flex items-center gap-3 mb-4 text-xs flex-wrap" style={{ color: MUTED }}>
+        <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded" style={{ background: NAVY_LIGHT }} /> Día de academia</span>
+        <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full" style={{ background: RED }} /> Vence matrícula</span>
+        <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full" style={{ background: GOLD_LIGHT }} /> Gasto cancha</span>
+      </div>
+
+      <div className="rounded-xl p-4" style={{ background: NAVY }}>
+        <p className="font-medium mb-2">{fmtDate(selectedDay)}</p>
+
+        {esDiaAcademiaSel && (
+          <div className="mb-3 pb-3 border-b" style={{ borderColor: NAVY_LIGHT }}>
+            {canceladaTx ? (
+              <div className="flex items-center justify-between text-sm">
+                <span className="flex items-center gap-1.5" style={{ color: RED }}><Ban size={14} /> Clase cancelada</span>
+                <button onClick={() => onEditTx(canceladaTx)} className="text-xs" style={{ color: MUTED }}>Deshacer</button>
+              </div>
+            ) : gastoDelDia ? (
+              <button onClick={() => onEditTx(gastoDelDia)} className="w-full flex items-center justify-between text-sm">
+                <span style={{ color: MUTED }}>Gasto de cancha</span>
+                <span className="flex items-center gap-1.5 font-medium" style={{ color: GOLD_LIGHT }}>
+                  S/ {gastoDelDia.monto.toFixed(2)} <Pencil size={13} />
+                </span>
+              </button>
+            ) : (
+              <div className="flex gap-2">
+                <button onClick={() => onAddGasto(selectedDay)} className="flex-1 text-xs py-2 rounded-lg font-medium" style={{ background: NAVY_LIGHT, color: GOLD_LIGHT }}>
+                  Registrar gasto de cancha
+                </button>
+                <button onClick={() => onMarcarCancelada(selectedDay)} className="flex-1 text-xs py-2 rounded-lg font-medium" style={{ background: NAVY_LIGHT, color: RED }}>
+                  Marcar cancelada
+                </button>
+              </div>
+            )}
+
+            {!canceladaTx && (
+              <button
+                onClick={() => onAbrirRegistroDia(selectedDay)}
+                className="w-full flex items-center justify-center gap-1.5 text-xs py-2 rounded-lg font-semibold mt-2"
+                style={{ background: GOLD, color: NAVY_DARK }}
+              >
+                <PlusCircle size={14} /> Ver y editar pagos de alumnos de este día
+              </button>
+            )}
+          </div>
+        )}
+
+        {vencimientosDelDia.length > 0 && (
+          <div className="mb-3">
+            <p className="text-xs font-medium mb-1" style={{ color: RED }}>Vence matrícula</p>
+            {vencimientosDelDia.map((s) => <p key={s.id} className="text-sm">{s.nombre} {s.apellido}</p>)}
+          </div>
+        )}
+
+        {eventosDelDia.length === 0 ? (
+          <p className="text-sm" style={{ color: MUTED }}>Sin asistencias ni pagos registrados este día.</p>
+        ) : (
+          <div className="space-y-1.5">
+            {eventosDelDia.map((e) => (
+              <div key={e.id} className="flex items-center justify-between text-sm">
+                <span>
+                  {e.student ? `${e.student.nombre} ${e.student.apellido}` : "Alumno eliminado"}
+                  <span style={{ color: MUTED }}> · {e.tipo === "asistencia" ? "asistió" : e.tipo === "matricula" ? "pagó matrícula" : "pagó diario"}</span>
+                </span>
+                {e.monto > 0 && <span style={{ color: GOLD_LIGHT }}>S/ {e.monto.toFixed(2)}</span>}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function AlumnosSection({
+  title,
+  students,
+  className = "",
+  onRemove,
+  onPagar,
+  asistioHoy,
+  saldoMatricula,
+  onMarcarAsistio,
+  pagadoHoyDiario,
+  saldoDiarioHoy,
+  onOpenDetail,
+  esInactivo,
+}) {
+  return (
+    <div className={className}>
+      <p className="text-sm font-medium mb-2" style={{ color: GOLD_LIGHT }}>
+        {title} · {students.length} alumno{students.length !== 1 ? "s" : ""}
+      </p>
+      {students.length === 0 ? (
+        <p className="text-sm" style={{ color: MUTED }}>Sin alumnos en esta categoría.</p>
+      ) : (
+        <div className="space-y-2">
+          {students.map((s) => {
+            const esMatriculado = s.tipo === "matriculado";
+            const vino = esMatriculado ? asistioHoy(s.id) : false;
+            const diasVenc = esMatriculado && s.fechaVenc ? diasHastaVencer(s.fechaVenc) : null;
+            const saldoMat = esMatriculado ? saldoMatricula(s) : 0;
+            const saldoDia = !esMatriculado ? saldoDiarioHoy(s) : 0;
+            const pagadoDia = !esMatriculado ? pagadoHoyDiario(s) : 0;
+
+            return (
+              <div key={s.id} className="flex items-center justify-between rounded-xl px-4 py-3 gap-3" style={{ background: NAVY }}>
+                <button onClick={() => onOpenDetail(s)} className="flex items-center gap-3 min-w-0 text-left">
+                  <div className="w-9 h-9 rounded-full flex items-center justify-center text-sm font-semibold flex-shrink-0" style={{ background: NAVY_LIGHT, color: GOLD_LIGHT }}>
+                    {s.nombre[0]}{s.apellido[0]}
+                  </div>
+                  <div className="min-w-0">
+                    <p className="font-medium truncate flex items-center gap-1.5">
+                      {s.nombre} {s.apellido}
+                      {esInactivo && esInactivo(s) && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium flex-shrink-0" style={{ background: NAVY_LIGHT, color: MUTED }}>Inactivo</span>
+                      )}
+                    </p>
+                    <p className="text-xs" style={{ color: MUTED }}>
+                      {esMatriculado
+                        ? diasVenc !== null && diasVenc <= 3
+                          ? `Vence en ${diasVenc <= 0 ? "0" : diasVenc} clase${diasVenc === 1 ? "" : "s"} · ${fmtDate(s.fechaVenc)}`
+                          : `Vigente hasta ${fmtDate(s.fechaVenc)}`
+                        : `Desde ${fmtDate(s.fechaInscripcion)}`}
+                    </p>
+                    {esMatriculado && (
+                      <p className="text-xs mt-0.5 font-medium" style={{ color: saldoMat > 0 ? AMBER : GREEN }}>
+                        {saldoMat > 0 ? `Falta S/ ${saldoMat.toFixed(2)}` : "Pago completo"}
+                      </p>
+                    )}
+                    {!esMatriculado && pagadoDia > 0 && saldoDia > 0 && (
+                      <p className="text-xs mt-0.5 font-medium" style={{ color: AMBER }}>
+                        Hoy: pagó S/ {pagadoDia.toFixed(2)}, falta S/ {saldoDia.toFixed(2)}
+                      </p>
+                    )}
+                    {!esMatriculado && saldoDia <= 0 && pagadoDia > 0 && (
+                      <p className="text-xs mt-0.5 font-medium" style={{ color: GREEN }}>Vino hoy · pago completo</p>
+                    )}
+                  </div>
+                </button>
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  {esMatriculado && (
+                    <button onClick={() => onPagar(s)} className="text-xs px-2.5 py-1.5 rounded-lg font-medium" style={{ background: NAVY_LIGHT, color: GOLD_LIGHT }}>
+                      {saldoMat > 0 ? "Pago" : "Renovar"}
+                    </button>
+                  )}
+                  {esMatriculado && !vino && (
+                    <button onClick={() => onMarcarAsistio(s)} className="flex items-center gap-1 text-xs px-3 py-1.5 rounded-lg font-semibold" style={{ background: GOLD, color: NAVY_DARK }}>
+                      <Check size={14} /> Asistió
+                    </button>
+                  )}
+                  {esMatriculado && vino && (
+                    <span className="flex items-center gap-1 text-xs px-3 py-1.5 rounded-lg font-medium" style={{ background: "#1E3B24", color: GREEN }}>
+                      <Check size={14} />
+                    </span>
+                  )}
+                  {!esMatriculado && saldoDia > 0 && (
+                    <button onClick={() => onPagar(s)} className="flex items-center gap-1 text-xs px-3 py-1.5 rounded-lg font-semibold" style={{ background: GOLD, color: NAVY_DARK }}>
+                      <Check size={14} /> {pagadoDia > 0 ? "Completar" : "Vino hoy"}
+                    </button>
+                  )}
+                  <button onClick={() => onRemove(s.id)} style={{ color: MUTED }}><Trash2 size={15} /></button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function RegistroDiaModal({ fecha, students, asistioEnFecha, saldoMatricula, pagadoDiarioEnFecha, saldoDiarioEnFecha, onClose, onMarcarAsistio, onAgregarPago }) {
+  const matriculados = students.filter((s) => s.tipo === "matriculado");
+  const diarios = students.filter((s) => s.tipo === "diario");
+
+  return (
+    <div className="fixed inset-0 flex items-end sm:items-center justify-center p-4 z-50" style={{ background: "rgba(0,0,0,0.6)" }}>
+      <div className="w-full max-w-sm rounded-2xl p-5 max-h-[85vh] overflow-y-auto" style={{ background: NAVY }}>
+        <div className="flex items-center justify-between mb-1">
+          <p className="font-semibold">Registros del {fmtDate(fecha)}</p>
+          <button onClick={onClose} style={{ color: MUTED }}><X size={18} /></button>
+        </div>
+        <p className="text-xs mb-4" style={{ color: MUTED }}>
+          Edita o completa pagos de alumnos para esta fecha específica, aunque no sea hoy.
+        </p>
+
+        <p className="text-xs font-medium mb-2" style={{ color: GOLD_LIGHT }}>Matriculados</p>
+        {matriculados.length === 0 ? (
+          <p className="text-sm mb-4" style={{ color: MUTED }}>Sin alumnos matriculados.</p>
+        ) : (
+          <div className="space-y-2 mb-4">
+            {matriculados.map((s) => {
+              const vino = asistioEnFecha(s.id, fecha);
+              const saldo = saldoMatricula(s);
+              return (
+                <div key={s.id} className="flex items-center justify-between rounded-lg px-3 py-2 text-sm" style={{ background: NAVY_LIGHT }}>
+                  <div className="min-w-0">
+                    <p className="truncate">{s.nombre} {s.apellido}</p>
+                    <p className="text-xs" style={{ color: saldo > 0 ? AMBER : GREEN }}>{saldo > 0 ? `Falta S/ ${saldo.toFixed(2)}` : "Al día"}</p>
+                  </div>
+                  <div className="flex items-center gap-1.5 flex-shrink-0">
+                    <button onClick={() => onAgregarPago(s, "matricula")} className="text-xs px-2 py-1 rounded-lg font-medium" style={{ background: NAVY, color: GOLD_LIGHT }}>
+                      {saldo > 0 ? "Pago" : "Renovar"}
+                    </button>
+                    {vino ? (
+                      <span className="flex items-center justify-center w-7 h-7 rounded-lg" style={{ background: "#1E3B24", color: GREEN }}><Check size={13} /></span>
+                    ) : (
+                      <button onClick={() => onMarcarAsistio(s)} className="flex items-center justify-center w-7 h-7 rounded-lg" style={{ background: GOLD, color: NAVY_DARK }}><Check size={13} /></button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        <p className="text-xs font-medium mb-2" style={{ color: GOLD_LIGHT }}>Diarios</p>
+        {diarios.length === 0 ? (
+          <p className="text-sm" style={{ color: MUTED }}>Sin alumnos diarios.</p>
+        ) : (
+          <div className="space-y-2">
+            {diarios.map((s) => {
+              const pagado = pagadoDiarioEnFecha(s, fecha);
+              const saldo = saldoDiarioEnFecha(s, fecha);
+              const completo = saldo <= 0 && pagado > 0;
+              return (
+                <div key={s.id} className="flex items-center justify-between rounded-lg px-3 py-2 text-sm" style={{ background: NAVY_LIGHT }}>
+                  <div className="min-w-0">
+                    <p className="truncate">{s.nombre} {s.apellido}</p>
+                    <p className="text-xs" style={{ color: completo ? GREEN : pagado > 0 ? AMBER : MUTED }}>
+                      {completo ? "Pagó ese día" : pagado > 0 ? `Pagó S/ ${pagado.toFixed(2)}, falta S/ ${saldo.toFixed(2)}` : "Sin registrar"}
+                    </p>
+                  </div>
+                  {completo ? (
+                    <span className="flex items-center justify-center w-7 h-7 rounded-lg flex-shrink-0" style={{ background: "#1E3B24", color: GREEN }}><Check size={13} /></span>
+                  ) : (
+                    <button onClick={() => onAgregarPago(s, "diario")} className="flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg font-semibold flex-shrink-0" style={{ background: GOLD, color: NAVY_DARK }}>
+                      <PlusCircle size={13} /> {pagado > 0 ? "Completar" : "Añadir"}
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function RegistroSection({ title, students, tipo, className = "", asistioHoy, saldoMatricula, pagadoHoyDiario, saldoDiarioHoy, onAgregar }) {
+  return (
+    <div className={className}>
+      <p className="text-sm font-medium mb-2" style={{ color: GOLD_LIGHT }}>
+        {title} · {students.length} alumno{students.length !== 1 ? "s" : ""}
+      </p>
+      {students.length === 0 ? (
+        <p className="text-sm" style={{ color: MUTED }}>Sin alumnos en esta categoría.</p>
+      ) : (
+        <div className="space-y-2">
+          {students.map((s) => {
+            const esMatriculado = tipo === "matriculado";
+            const vino = esMatriculado ? asistioHoy(s.id) : false;
+            const saldoMat = esMatriculado ? saldoMatricula(s) : 0;
+            const saldoDia = !esMatriculado ? saldoDiarioHoy(s) : 0;
+            const pagadoDia = !esMatriculado ? pagadoHoyDiario(s) : 0;
+            const yaCompleto = esMatriculado ? saldoMat <= 0 && vino : saldoDia <= 0 && pagadoDia > 0;
+
+            return (
+              <div key={s.id} className="flex items-center justify-between rounded-xl px-4 py-3 gap-3" style={{ background: NAVY }}>
+                <div className="min-w-0">
+                  <p className="font-medium truncate">{s.nombre} {s.apellido}</p>
+                  <p className="text-xs font-medium" style={{ color: esMatriculado ? (saldoMat > 0 ? AMBER : GREEN) : pagadoDia > 0 && saldoDia > 0 ? AMBER : saldoDia <= 0 && pagadoDia > 0 ? GREEN : MUTED }}>
+                    {esMatriculado
+                      ? saldoMat > 0
+                        ? `Falta S/ ${saldoMat.toFixed(2)}`
+                        : "Matrícula al día"
+                      : pagadoDia > 0 && saldoDia > 0
+                      ? `Pagó S/ ${pagadoDia.toFixed(2)}, falta S/ ${saldoDia.toFixed(2)}`
+                      : saldoDia <= 0 && pagadoDia > 0
+                      ? "Realizó pago hoy"
+                      : "Sin registrar hoy"}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  {yaCompleto ? (
+                    <span className="flex items-center gap-1 text-xs px-3 py-1.5 rounded-lg font-medium" style={{ background: "#1E3B24", color: GREEN }}>
+                      <Check size={14} />
+                    </span>
+                  ) : (
+                    <button
+                      onClick={() => onAgregar(s)}
+                      className="flex items-center gap-1 text-sm px-3 py-1.5 rounded-lg font-semibold"
+                      style={{ background: GOLD, color: NAVY_DARK }}
+                    >
+                      <PlusCircle size={16} /> {esMatriculado ? (saldoMat > 0 ? "Pago" : "Renovar") : pagadoDia > 0 ? "Completar" : "Añadir"}
+                    </button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function InactivosBanner({ matriculados, diarios, esInactivoMatriculado, esInactivoDiario, diasSinActividad, diasHastaVencer, onSelect }) {
+  const inactivosMat = matriculados.filter(esInactivoMatriculado);
+  const inactivosDia = diarios.filter(esInactivoDiario);
+  const total = inactivosMat.length + inactivosDia.length;
+  if (total === 0) return null;
+
+  return (
+    <div className="rounded-xl p-3 mb-4" style={{ background: NAVY, border: `1px solid ${NAVY_LIGHT}` }}>
+      <p className="text-xs font-semibold mb-1.5" style={{ color: MUTED }}>
+        {total} alumno{total !== 1 ? "s" : ""} sin actividad reciente
+      </p>
+      <div className="space-y-1">
+        {inactivosMat.map((s) => (
+          <button key={s.id} onClick={() => onSelect(s)} className="w-full flex items-center justify-between text-sm">
+            <span>{s.nombre} {s.apellido}</span>
+            <span style={{ color: MUTED }}>Vencida hace {Math.abs(diasHastaVencer(s.fechaVenc))} días</span>
+          </button>
+        ))}
+        {inactivosDia.map((s) => {
+          const dias = diasSinActividad(s.id);
+          return (
+            <button key={s.id} onClick={() => onSelect(s)} className="w-full flex items-center justify-between text-sm">
+              <span>{s.nombre} {s.apellido}</span>
+              <span style={{ color: MUTED }}>{dias === null ? "Nunca registró pago" : `Sin venir hace ${dias} días`}</span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function AlumnoCard({ student, saldo, costo, inactivo, onClick }) {
+  const alDia = saldo <= 0;
+  return (
+    <button
+      onClick={onClick}
+      className="relative rounded-2xl p-3 flex flex-col items-center text-center"
+      style={{
+        background: `linear-gradient(160deg, ${NAVY_LIGHT} 0%, ${NAVY} 65%)`,
+        border: `1.5px solid ${alDia ? GOLD : NAVY_LIGHT}`,
+        opacity: inactivo ? 0.55 : 1,
+      }}
+    >
+      {alDia && (
+        <span className="absolute top-2 right-2 w-2 h-2 rounded-full" style={{ background: GREEN }} />
+      )}
+      <div
+        className="w-14 h-14 rounded-full flex items-center justify-center text-base font-bold mb-2 border-2"
+        style={{ background: NAVY_DARK, color: GOLD_LIGHT, borderColor: GOLD }}
+      >
+        {student.nombre[0]}{student.apellido[0]}
+      </div>
+      <p className="text-sm font-semibold truncate w-full">{student.nombre}</p>
+      <p className="text-xs truncate w-full mb-1.5" style={{ color: MUTED }}>{student.apellido}</p>
+      <div className="w-full h-px mb-1.5" style={{ background: NAVY_LIGHT }} />
+      <p className="text-[10px] uppercase tracking-wide" style={{ color: GOLD_LIGHT }}>
+        {student.tipo === "matriculado" ? "Matriculado" : "Diario"}
+      </p>
+      <p className="text-xs font-medium mt-0.5" style={{ color: alDia ? GREEN : AMBER }}>
+        {alDia ? "Al día" : `Falta S/ ${saldo.toFixed(2)}`}
+      </p>
+      {inactivo && (
+        <p className="text-[10px] mt-1 px-1.5 py-0.5 rounded-full" style={{ background: NAVY_DARK, color: MUTED }}>Inactivo</p>
+      )}
+    </button>
+  );
+}
+
+function AlertaVencimientos({ students, diasHastaVencer, onSelect }) {
+  const alertas = students
+    .filter((s) => s.fechaVenc && diasHastaVencer(s.fechaVenc) <= 3)
+    .sort((a, b) => diasHastaVencer(a.fechaVenc) - diasHastaVencer(b.fechaVenc));
+
+  if (alertas.length === 0) return null;
+
+  return (
+    <div className="rounded-xl p-3 mb-4" style={{ background: "#3A2A16", border: `1px solid ${AMBER}` }}>
+      <p className="text-xs font-semibold mb-1.5 flex items-center gap-1.5" style={{ color: AMBER }}>
+        ⚠ {alertas.length} matrícula{alertas.length !== 1 ? "s" : ""} por vencer o vencida{alertas.length !== 1 ? "s" : ""}
+      </p>
+      <div className="space-y-1">
+        {alertas.map((s) => {
+          const dias = diasHastaVencer(s.fechaVenc);
+          return (
+            <button key={s.id} onClick={() => onSelect(s)} className="w-full flex items-center justify-between text-sm">
+              <span>{s.nombre} {s.apellido}</span>
+              <span style={{ color: dias < 0 ? RED : AMBER }}>
+                {dias < 0 ? `Vencida hace ${Math.abs(dias)} día${Math.abs(dias) === 1 ? "" : "s"}` : dias === 0 ? "Vence hoy" : `Vence en ${dias} día${dias === 1 ? "" : "s"}`}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function StudentDetailModal({ student, transactions, onClose, onSaveNotas }) {
+  const [notas, setNotas] = useState(student.notas || "");
+  const [guardado, setGuardado] = useState(false);
+  const ordenadas = [...transactions].sort((a, b) => (a.fecha < b.fecha ? 1 : -1));
+
+  const guardarNotas = () => {
+    onSaveNotas(student.id, notas);
+    setGuardado(true);
+    setTimeout(() => setGuardado(false), 1200);
+  };
+
+  return (
+    <div className="fixed inset-0 flex items-end sm:items-center justify-center p-4 z-50" style={{ background: "rgba(0,0,0,0.6)" }}>
+      <div className="w-full max-w-sm rounded-2xl p-5 max-h-[85vh] overflow-y-auto" style={{ background: NAVY }}>
+        <div className="flex items-center justify-between mb-1">
+          <p className="font-semibold">{student.nombre} {student.apellido}</p>
+          <button onClick={onClose} style={{ color: MUTED }}><X size={18} /></button>
+        </div>
+        <p className="text-xs mb-4 capitalize" style={{ color: MUTED }}>
+          {student.tipo} · Desde {fmtDate(student.fechaInscripcion)}
+          {student.fechaVenc ? ` · vence ${fmtDate(student.fechaVenc)}` : ""}
+        </p>
+
+        <p className="text-xs font-medium mb-1" style={{ color: GOLD_LIGHT }}>Notas</p>
+        <textarea
+          value={notas}
+          onChange={(e) => setNotas(e.target.value)}
+          rows={3}
+          className="w-full rounded-lg px-3 py-2 text-sm outline-none mb-2 resize-none"
+          style={{ background: NAVY_LIGHT, color: TEXT }}
+          placeholder="Ej. el papá recoge tarde, lesión en la rodilla, etc."
+        />
+        <button onClick={guardarNotas} className="w-full py-2 rounded-lg text-sm font-semibold mb-5" style={{ background: guardado ? GREEN : GOLD, color: NAVY_DARK }}>
+          {guardado ? "Guardado ✓" : "Guardar notas"}
+        </button>
+
+        <p className="text-xs font-medium mb-2" style={{ color: GOLD_LIGHT }}>Historial ({ordenadas.length})</p>
+        {ordenadas.length === 0 ? (
+          <p className="text-sm" style={{ color: MUTED }}>Sin movimientos todavía.</p>
+        ) : (
+          <div className="space-y-1.5">
+            {ordenadas.map((t) => (
+              <div key={t.id} className="flex items-center justify-between text-sm rounded-lg px-3 py-2" style={{ background: NAVY_LIGHT }}>
+                <span>
+                  {fmtDate(t.fecha)}
+                  <span style={{ color: MUTED }}> · {t.tipo === "asistencia" ? "asistió" : t.tipo === "matricula" ? "pagó matrícula" : "pagó diario"}</span>
+                </span>
+                {t.monto > 0 && <span style={{ color: GOLD_LIGHT }}>S/ {t.monto.toFixed(2)}</span>}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function EmptyState({ text }) {
+  return <div className="rounded-xl p-6 text-center text-sm" style={{ background: NAVY, color: MUTED }}>{text}</div>;
+}
+
+function AddStudentModal({ onClose, onAdd }) {
+  const [nombre, setNombre] = useState("");
+  const [apellido, setApellido] = useState("");
+  const [tipo, setTipo] = useState("matriculado");
+  const [montoPagado, setMontoPagado] = useState("");
+  const [metodo, setMetodo] = useState("efectivo");
+  const precioFijo = tipo === "matriculado" ? PRECIO_MATRICULA : PRECIO_DIARIO;
+  const excedeMonto = Number(montoPagado) > precioFijo;
+  const puedeGuardar = nombre.trim() && apellido.trim() && !excedeMonto;
+
+  return (
+    <div className="fixed inset-0 flex items-end sm:items-center justify-center p-4 z-50 overflow-y-auto" style={{ background: "rgba(0,0,0,0.6)" }}>
+      <div className="w-full max-w-sm rounded-2xl p-5 my-4" style={{ background: NAVY }}>
+        <div className="flex items-center justify-between mb-4">
+          <p className="font-semibold">Añadir alumno</p>
+          <button onClick={onClose} style={{ color: MUTED }}><X size={18} /></button>
+        </div>
+        <label className="text-xs" style={{ color: MUTED }}>Nombre</label>
+        <input value={nombre} onChange={(e) => setNombre(e.target.value)} className="w-full mt-1 mb-3 rounded-lg px-3 py-2 text-sm outline-none" style={{ background: NAVY_LIGHT, color: TEXT }} placeholder="Ej. Mateo" />
+        <label className="text-xs" style={{ color: MUTED }}>Apellido</label>
+        <input value={apellido} onChange={(e) => setApellido(e.target.value)} className="w-full mt-1 mb-3 rounded-lg px-3 py-2 text-sm outline-none" style={{ background: NAVY_LIGHT, color: TEXT }} placeholder="Ej. Ramírez" />
+        <label className="text-xs" style={{ color: MUTED }}>Tipo de alumno</label>
+        <div className="flex gap-2 mt-1 mb-3">
+          {["matriculado", "diario"].map((t) => (
+            <button key={t} onClick={() => setTipo(t)} className="flex-1 text-sm py-2 rounded-lg font-medium capitalize" style={{ background: tipo === t ? GOLD : NAVY_LIGHT, color: tipo === t ? NAVY_DARK : TEXT }}>{t}</button>
+          ))}
+        </div>
+        <div className="rounded-lg px-3 py-2 mb-3 text-sm flex items-center justify-between" style={{ background: NAVY_LIGHT }}>
+          <span style={{ color: MUTED }}>Costo {tipo === "matriculado" ? "mensual" : "por día"}</span>
+          <span className="font-semibold" style={{ color: GOLD_LIGHT }}>S/ {precioFijo.toFixed(2)}</span>
+        </div>
+        <label className="text-xs" style={{ color: MUTED }}>Monto que paga ahora (déjalo vacío si aún no paga; puede ser un adelanto)</label>
+        <input
+          type="number" value={montoPagado} onChange={(e) => setMontoPagado(e.target.value)} max={precioFijo}
+          className="w-full mt-1 rounded-lg px-3 py-2 text-sm outline-none"
+          style={{ background: NAVY_LIGHT, color: TEXT, border: excedeMonto ? `1px solid ${RED}` : "1px solid transparent" }}
+          placeholder={`0.00 (máx. S/ ${precioFijo})`}
+        />
+        {excedeMonto && <p className="text-xs mt-1 mb-1" style={{ color: RED }}>No puede pagar más de S/ {precioFijo.toFixed(2)}.</p>}
+        <div className={excedeMonto ? "mb-3" : "mb-3 mt-2"} />
+        {Number(montoPagado) > 0 && !excedeMonto && (
+          <>
+            <label className="text-xs" style={{ color: MUTED }}>Método de pago</label>
+            <div className="flex gap-2 mt-1 mb-4">
+              {["efectivo", "yape"].map((m) => (
+                <button key={m} onClick={() => setMetodo(m)} className="flex-1 text-sm py-2 rounded-lg font-medium capitalize" style={{ background: metodo === m ? GOLD : NAVY_LIGHT, color: metodo === m ? NAVY_DARK : TEXT }}>{m}</button>
+              ))}
+            </div>
+          </>
+        )}
+        <button disabled={!puedeGuardar} onClick={() => onAdd(nombre.trim(), apellido.trim(), tipo, Number(montoPagado) > 0 ? { monto: montoPagado, metodo } : null)} className="w-full py-2.5 rounded-lg font-semibold disabled:opacity-40" style={{ background: GOLD, color: NAVY_DARK }}>
+          Guardar alumno
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function PayModal({ student, kind, saldo, precioFijo, fecha, onClose, onConfirm }) {
+  const esNuevoPeriodo = kind === "matricula" && saldo <= 0;
+  const maxPermitido = esNuevoPeriodo ? precioFijo : saldo;
+  const [monto, setMonto] = useState(maxPermitido > 0 ? String(maxPermitido) : "");
+  const [metodo, setMetodo] = useState("efectivo");
+  const excede = Number(monto) > maxPermitido;
+  const noEsHoy = fecha && fecha !== todayISO();
+
+  return (
+    <div className="fixed inset-0 flex items-end sm:items-center justify-center p-4 z-50" style={{ background: "rgba(0,0,0,0.6)" }}>
+      <div className="w-full max-w-sm rounded-2xl p-5" style={{ background: NAVY }}>
+        <div className="flex items-center justify-between mb-4">
+          <p className="font-semibold">{kind === "diario" ? "Registrar pago del día" : esNuevoPeriodo ? "Renovar matrícula (nuevo mes)" : "Registrar abono de matrícula"}</p>
+          <button onClick={onClose} style={{ color: MUTED }}><X size={18} /></button>
+        </div>
+        <p className="text-sm mb-1" style={{ color: MUTED }}>{student.nombre} {student.apellido}</p>
+        {noEsHoy && (
+          <p className="text-xs mb-2 font-medium" style={{ color: GOLD_LIGHT }}>Registrando para el {fmtDate(fecha)}</p>
+        )}
+        <p className="text-xs mb-3 font-medium" style={{ color: AMBER }}>
+          {esNuevoPeriodo ? `Costo del mes: S/ ${precioFijo.toFixed(2)}` : `Saldo pendiente: S/ ${saldo.toFixed(2)}`}
+        </p>
+        <label className="text-xs" style={{ color: MUTED }}>Monto que paga (S/)</label>
+        <input type="number" value={monto} onChange={(e) => setMonto(e.target.value)} max={maxPermitido} className="w-full mt-1 rounded-lg px-3 py-2 text-sm outline-none" style={{ background: NAVY_LIGHT, color: TEXT, border: excede ? `1px solid ${RED}` : "1px solid transparent" }} placeholder="0.00" />
+        {excede && <p className="text-xs mt-1" style={{ color: RED }}>El máximo a registrar es S/ {maxPermitido.toFixed(2)}.</p>}
+        <label className="text-xs block mt-3" style={{ color: MUTED }}>Método de pago</label>
+        <div className="flex gap-2 mt-1 mb-4">
+          {["efectivo", "yape"].map((m) => (
+            <button key={m} onClick={() => setMetodo(m)} className="flex-1 text-sm py-2 rounded-lg font-medium capitalize" style={{ background: metodo === m ? GOLD : NAVY_LIGHT, color: metodo === m ? NAVY_DARK : TEXT }}>{m}</button>
+          ))}
+        </div>
+        <button disabled={!monto || Number(monto) <= 0 || excede} onClick={() => onConfirm(student, kind, monto, metodo, fecha)} className="w-full py-2.5 rounded-lg font-semibold disabled:opacity-40" style={{ background: GOLD, color: NAVY_DARK }}>
+          Confirmar pago
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function GastoModal({ fecha, onClose, onConfirm }) {
+  const [monto, setMonto] = useState("");
+  const [metodo, setMetodo] = useState("efectivo");
+  return (
+    <div className="fixed inset-0 flex items-end sm:items-center justify-center p-4 z-50" style={{ background: "rgba(0,0,0,0.6)" }}>
+      <div className="w-full max-w-sm rounded-2xl p-5" style={{ background: NAVY }}>
+        <div className="flex items-center justify-between mb-4">
+          <p className="font-semibold">Gasto de cancha</p>
+          <button onClick={onClose} style={{ color: MUTED }}><X size={18} /></button>
+        </div>
+        <p className="text-sm mb-3" style={{ color: MUTED }}>{fmtDate(fecha)}</p>
+        <label className="text-xs" style={{ color: MUTED }}>Monto pagado por la cancha (S/)</label>
+        <input type="number" value={monto} onChange={(e) => setMonto(e.target.value)} className="w-full mt-1 mb-3 rounded-lg px-3 py-2 text-sm outline-none" style={{ background: NAVY_LIGHT, color: TEXT }} placeholder="0.00" />
+        <label className="text-xs" style={{ color: MUTED }}>Método de pago</label>
+        <div className="flex gap-2 mt-1 mb-4">
+          {["efectivo", "yape"].map((m) => (
+            <button key={m} onClick={() => setMetodo(m)} className="flex-1 text-sm py-2 rounded-lg font-medium capitalize" style={{ background: metodo === m ? GOLD : NAVY_LIGHT, color: metodo === m ? NAVY_DARK : TEXT }}>{m}</button>
+          ))}
+        </div>
+        <button disabled={!monto || Number(monto) <= 0} onClick={() => onConfirm(fecha, monto, metodo)} className="w-full py-2.5 rounded-lg font-semibold disabled:opacity-40" style={{ background: GOLD, color: NAVY_DARK }}>
+          Guardar gasto
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function EditTxModal({ tx, student, onClose, onSave, onDelete }) {
+  const esCancelada = tx.tipo === "cancelada";
+  const [monto, setMonto] = useState(String(tx.monto));
+  const [metodo, setMetodo] = useState(tx.metodo || "efectivo");
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const titulo = tx.tipo === "matricula" ? "Editar pago de matrícula" : tx.tipo === "diario" ? "Editar pago diario" : tx.tipo === "gasto" ? "Editar gasto de cancha" : "Clase cancelada";
+
+  if (esCancelada) {
+    return (
+      <div className="fixed inset-0 flex items-end sm:items-center justify-center p-4 z-50" style={{ background: "rgba(0,0,0,0.6)" }}>
+        <div className="w-full max-w-sm rounded-2xl p-5" style={{ background: NAVY }}>
+          <div className="flex items-center justify-between mb-4">
+            <p className="font-semibold">{titulo}</p>
+            <button onClick={onClose} style={{ color: MUTED }}><X size={18} /></button>
+          </div>
+          <p className="text-sm mb-4" style={{ color: MUTED }}>{fmtDate(tx.fecha)} · marcada como clase cancelada.</p>
+          <div className="flex gap-2">
+            <button onClick={onClose} className="flex-1 py-2.5 rounded-lg font-semibold" style={{ background: NAVY_LIGHT, color: TEXT }}>Cerrar</button>
+            <button onClick={() => onDelete(tx.id)} className="flex-1 py-2.5 rounded-lg font-semibold" style={{ background: RED, color: NAVY_DARK }}>Deshacer cancelación</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="fixed inset-0 flex items-end sm:items-center justify-center p-4 z-50" style={{ background: "rgba(0,0,0,0.6)" }}>
+      <div className="w-full max-w-sm rounded-2xl p-5" style={{ background: NAVY }}>
+        <div className="flex items-center justify-between mb-4">
+          <p className="font-semibold">{titulo}</p>
+          <button onClick={onClose} style={{ color: MUTED }}><X size={18} /></button>
+        </div>
+        <p className="text-sm mb-3" style={{ color: MUTED }}>
+          {tx.tipo === "gasto" ? "Alquiler de cancha" : student ? `${student.nombre} ${student.apellido}` : "Alumno eliminado"} · {fmtDate(tx.fecha)}
+        </p>
+        <label className="text-xs" style={{ color: MUTED }}>Monto (S/)</label>
+        <input type="number" value={monto} onChange={(e) => setMonto(e.target.value)} className="w-full mt-1 mb-3 rounded-lg px-3 py-2 text-sm outline-none" style={{ background: NAVY_LIGHT, color: TEXT }} />
+        <label className="text-xs" style={{ color: MUTED }}>Método de pago</label>
+        <div className="flex gap-2 mt-1 mb-4">
+          {["efectivo", "yape"].map((m) => (
+            <button key={m} onClick={() => setMetodo(m)} className="flex-1 text-sm py-2 rounded-lg font-medium capitalize" style={{ background: metodo === m ? GOLD : NAVY_LIGHT, color: metodo === m ? NAVY_DARK : TEXT }}>{m}</button>
+          ))}
+        </div>
+        {!confirmDelete ? (
+          <div className="flex gap-2">
+            <button onClick={() => setConfirmDelete(true)} className="flex-1 py-2.5 rounded-lg font-semibold flex items-center justify-center gap-1.5" style={{ background: NAVY_LIGHT, color: RED }}><Trash2 size={15} /> Eliminar</button>
+            <button disabled={!monto || Number(monto) <= 0} onClick={() => onSave(tx.id, monto, metodo)} className="flex-1 py-2.5 rounded-lg font-semibold disabled:opacity-40" style={{ background: GOLD, color: NAVY_DARK }}>Guardar</button>
+          </div>
+        ) : (
+          <div>
+            <p className="text-sm mb-3" style={{ color: TEXT }}>¿Eliminar este registro? No se puede deshacer.</p>
+            <div className="flex gap-2">
+              <button onClick={() => setConfirmDelete(false)} className="flex-1 py-2.5 rounded-lg font-semibold" style={{ background: NAVY_LIGHT, color: TEXT }}>Cancelar</button>
+              <button onClick={() => onDelete(tx.id)} className="flex-1 py-2.5 rounded-lg font-semibold" style={{ background: RED, color: NAVY_DARK }}>Sí, eliminar</button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ConfirmModal({ title, message, confirmLabel, onCancel, onConfirm }) {
+  return (
+    <div className="fixed inset-0 flex items-end sm:items-center justify-center p-4 z-50" style={{ background: "rgba(0,0,0,0.6)" }}>
+      <div className="w-full max-w-sm rounded-2xl p-5" style={{ background: NAVY }}>
+        <p className="font-semibold mb-2">{title}</p>
+        <p className="text-sm mb-4" style={{ color: MUTED }}>{message}</p>
+        <div className="flex gap-2">
+          <button onClick={onCancel} className="flex-1 py-2.5 rounded-lg font-semibold" style={{ background: NAVY_LIGHT, color: TEXT }}>Cancelar</button>
+          <button onClick={onConfirm} className="flex-1 py-2.5 rounded-lg font-semibold" style={{ background: RED, color: NAVY_DARK }}>{confirmLabel}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById("root"));
+root.render(React.createElement(App));
+</script>
+
+<script>
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("sw.js").catch(() => {});
+  });
+}
+</script>
+</body>
+</html>

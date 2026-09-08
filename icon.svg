@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="96" fill="#0B1526"/>
+  <rect x="16" y="16" width="480" height="480" rx="84" fill="none" stroke="#C9A227" stroke-width="12"/>
+  <circle cx="256" cy="256" r="150" fill="#122242" stroke="#C9A227" stroke-width="10"/>
+  <text x="256" y="290" font-family="Arial, sans-serif" font-size="150" font-weight="bold" fill="#E4C567" text-anchor="middle">TC</text>
+</svg>
