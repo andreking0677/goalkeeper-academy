@@ -1,11 +1,13 @@
-const CACHE_NAME = "tc-academy-v1";
+const CACHE_NAME = "tc-academy-v2";
 const URLS = [
+  "./",
   "./index.html",
   "./manifest.json",
   "./icon.svg",
-  "https://unpkg.com/react@18/umd/react.production.min.js",
-  "https://unpkg.com/react-dom@18/umd/react-dom.production.min.js",
-  "https://unpkg.com/@babel/standalone/babel.min.js",
+  "./tailwind.css",
+  "./react.production.min.js",
+  "./react-dom.production.min.js",
+  "./babel.min.js",
 ];
 
 self.addEventListener("install", (event) => {
